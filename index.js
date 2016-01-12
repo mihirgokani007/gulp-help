@@ -1,160 +1,133 @@
-var objectAssign = require('object-assign'),
-  chalk = require('chalk'),
-  attachHelp = require('./lib/attach-help.js'),
-  calculateMargin = require('./lib/calculate-margin.js'),
-  noop = require('./lib/noop'),
-  DEFAULT_OPTIONS = {
-    aliases: [],
-    description: 'Display this help text.',
-    afterPrintCallback: noop,
-    hideDepsMessage: false,
-    hideEmpty: false
-  };
+var chalk = require('chalk');
 
-module.exports = function (gulp, options) {
-  var originalTaskFn = gulp.task;
-
-  options = objectAssign({}, DEFAULT_OPTIONS, options);
+module.exports = function (gulp) {
+  var origTask = gulp.task;
 
   /**
-   * gulp.task(name[, help, deps, fn, taskOptions])
+   * gulp.task(name[, help, deps, fn])
    *
-   * Adds `help` and `taskOptions` to the typical gulp task definition:
+   * Adds `help` to the typical gulp task definition:
    * https://github.com/gulpjs/gulp/blob/master/docs/API.md#gulptaskname-deps-fn
-   * @param {string} name
-   * @param {string | boolean} [help]
-   * @param {Array} [deps]
-   * @param {function} [fn]
-   * @param {object} [taskOptions]
    */
-  gulp.task = function (name, help, deps, fn, taskOptions) {
+  gulp.task = function(name, help, deps, fn) {
     var task;
-
-    /* jshint noempty: false */
-    if (name && (help === null || help === undefined)) {
-      // just a name. do nothing.
-    } else if (help === false) {
-      // .task('test', false, ...)
-      //ignoredTasks.push(name);
-      if (typeof deps === 'function') {
-        // .task('test', false, function(){}, {})
-        taskOptions = fn;
+    // Do arguments shuffling only when number of given arguments are less than required
+    if (arguments.length < 4) {
+      // help can be a string or an object; if not, shuffle
+      if (typeof help !== 'string' && typeof help !== 'object') {
         fn = deps;
-        deps = undefined;
-      } else {
-        // .task('test', false, ['dep'], function(){}, {})
-        // nothing needs to be re-assigned
+        deps = help;
+        help = null;
       }
-    } else if (typeof help === 'function') {
-      // .task('test', function(){})
-      taskOptions = deps;
-      fn = undefined;
-      deps = help;
-      help = undefined;
-    } else if (Array.isArray(help)) {
-      // .task('test', ['dep'], ...)
-      taskOptions = fn;
-      fn = deps;
-      deps = help;
-      help = undefined;
-    } else if (name && !deps) {
-      // .task('test', '...')
-      // help text with no func and no deps
-    } else if (typeof deps === 'function') {
-      // .task('test', '...', function, {})
-      taskOptions = fn;
-      fn = deps;
-      deps = undefined;
-    } else if (Array.isArray(deps)) {
-      // .task('test', '...', ['dep'], function, {})
-      // nothing needs to be re-assigned
-    } else {
-      throw new Error('gulp-help: Unexpected arg types. Should be in the form: `gulp.task(name[, help, deps, fn, taskOptions])`');
     }
 
-    if (!deps) {
-      originalTaskFn.call(gulp, name, fn);
-    } else {
-      originalTaskFn.call(gulp, name, deps, fn);
-    }
-
+    origTask.call(gulp, name, deps, fn);
     task = gulp.tasks[name];
+    task.help = help;
 
-    taskOptions = objectAssign({
-      aliases: []
-    }, taskOptions);
-
-
-    taskOptions.aliases.forEach(function (alias) {
-      gulp.task(alias, false, [name], noop);
-    });
-
-    attachHelp(task, help, deps, taskOptions);
-
-    return gulp;
+    return task;
   };
 
-  gulp.task('help', options.description, function () {
-    var marginData = calculateMargin(gulp.tasks);
-    var margin = marginData.margin;
-    var hideDepsMessageOpt = options.hideDepsMessage;
-    var hideEmptyOpt = options.hideEmpty;
-    var showAllTasks = process.argv.indexOf('--all') !== -1;
-    var afterPrintCallback = options.afterPrintCallback;
+  gulp.task('help', 'Display this help text', function () {
+    var name = process.argv[3] || null, help;
 
-    // set options buffer if the tasks array has options
-    var optionsBuffer = marginData.hasOptions ? '  --' : '';
+    if (!gulp.tasks[name] && process.argv.length > 3) {
+      console.log('');
+      console.log('Invalid task name: ', name);
+    }
 
     console.log('');
     console.log(chalk.underline('Usage'));
-    console.log('  gulp [TASK] [OPTIONS...]');
-    console.log('');
-    console.log(chalk.underline('Available tasks'));
-    Object.keys(gulp.tasks).sort().forEach(function (name) {
-      if (gulp.tasks[name].help || showAllTasks) {
-        var help = gulp.tasks[name].help || {message: '', options: {}};
 
-        if (!showAllTasks && help.message === '' && hideEmptyOpt) {
-          return; //skip task
+    if (!name) {
+      console.log('  gulp [TASK] [OPTIONS...]');
+      console.log('');
+
+      console.log(chalk.underline('All Tasks:'));
+      Object.keys(gulp.tasks).sort().forEach(function (name) {
+        var help = getHelp(gulp.tasks[name]);
+        if (help) {
+          printHelp(help);
         }
-        var args = [' ', chalk.cyan(name)];
+      });
+    } else {
+      help = getHelp(gulp.tasks[name]);
+      if (help) {
+        console.log('  gulp ' + name + ' [OPTIONS...]');
+        console.log('');
 
-        args.push(new Array(margin - name.length + 1 + optionsBuffer.length).join(' '));
-
-        if (help.message) {
-          args.push(help.message);
-        }
-
-        if (help.aliases) {
-          args.push(help.aliases);
-        }
-
-        if (help.depsMessage && !hideDepsMessageOpt) {
-          args.push(chalk.cyan(help.depsMessage));
-        }
-
-        var options = Object.keys(help.options).sort();
-        options.forEach(function (option) {
-          var optText = help.options[option];
-          args.push('\n ' + optionsBuffer + chalk.cyan(option) + ' ');
-
-          args.push(new Array(margin - option.length + 1).join(' '));
-          args.push(optText);
-        });
-
-        console.log.apply(console, args);
+        printHelp(help);
       }
-    });
-    console.log('');
-    if (afterPrintCallback) {
-      afterPrintCallback(gulp.tasks);
     }
-  }, options);
+
+    console.log('');
+
+  });
 
   // do not add default task if one already exists
   if (gulp.tasks['default'] === undefined) {
-    gulp.task('default', false, ['help']);
+    gulp.task('default', ['help']);
   }
 
   return gulp;
 };
+
+function getHelp(task) {
+  var name = task.name,
+      help = task.help,
+      args;
+  
+  if (!help) {
+    return;
+  }
+  if (typeof help === 'function') {
+    help = help(task, name);
+  }
+  if (typeof help === 'string') {
+    help = {msg: help}
+  } 
+
+  args = [];
+  if (!help.args) {
+    args = [];
+  } else if (Array.isArray(help.args)) {
+    args.push.apply(args, help.args);
+  } else {
+    Object.keys(help.args).forEach(function(arg) {
+      args.push({name: arg, msg: help.args[arg]});
+    });
+  }
+
+  args = args.map(function(arg) {
+    if (typeof arg === 'string') {
+      arg = {name: arg}
+    } 
+
+    if (!arg.name) {
+      throw "arg.name must be specified";
+    }
+
+    if (!arg.aliases) {
+      arg.aliases = [];
+    }
+
+    return arg;
+  });
+
+  // Create copy, do not modufy original help object
+  help = {msg: help.msg};
+  help.name = task.name;
+  if (task.deps) {
+    help.deps = task.deps;
+  }
+  if (args.length) {
+    help.args = args;
+  }
+
+  return help;
+}
+
+function printHelp(help) {
+  console.log(help);
+}
+
